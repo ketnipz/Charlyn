@@ -1,7 +1,9 @@
-import random
+import random, string
 from datetime import datetime
 import discord
 from discord.ext import commands
+import aiohttp
+import io
 
 from tinydb import TinyDB, Query
 #from Music import Music
@@ -18,7 +20,6 @@ async def on_ready():
     print(bot.user.name)
     print(bot.user.id)
     print('------')
-    # print(
 
 @bot.event
 async def on_message_edit(before, after):
@@ -42,14 +43,33 @@ async def on_message_edit(before, after):
 async def on_message_delete(message):
     channel = discord.utils.get(message.guild.channels, name="logs")
 
-    embed = discord.Embed(title="Message Deleted",
-                          color=discord.Color.red(),
-                          timestamp=datetime.now())\
-        .set_author(name=message.author, icon_url=message.author.avatar_url)\
-        .add_field(name="Message", value=message.content)\
-        .add_field(name="Channel", value=message.channel.mention)
+    if message.attachments:
+        for attached_content in message.attachments:
+            if attached_content.proxy_url: # Easy way of detecting whether it's an image?
+                embed = discord.Embed(title="Message Deleted",
+                                      color=discord.Color.red(),
+                                      timestamp=datetime.now()) \
+                    .set_author(name=message.author, icon_url=message.author.avatar_url) \
+                    .add_field(name="Message", value="This user deleted an image.") \
+                    .add_field(name="Channel", value=message.channel.mention)
 
-    await channel.send(embed=embed)
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(attached_content.proxy_url) as resp:
+                        data = await resp.read()
+                        image = io.BytesIO(data)
+                        file  = discord.File(image, filename=attached_content.filename)
+
+                        await channel.send(embed=embed, file=file)
+
+    else:
+        embed = discord.Embed(title="Message Deleted",
+                              color=discord.Color.red(),
+                              timestamp=datetime.now()) \
+            .set_author(name=message.author, icon_url=message.author.avatar_url) \
+            .add_field(name="Message", value=message.content) \
+            .add_field(name="Channel", value=message.channel.mention)
+
+        await channel.send(embed=embed)
 
 @bot.event
 async def on_guild_role_update(before, after):
@@ -60,8 +80,11 @@ async def on_guild_role_update(before, after):
             print(f'{before} has been renamed to {after} internally')
 
 @bot.event
-async def on_reaction_add(reaction, user):
-    print(f'{user} reacted with {reaction.emoji}')
+async def on_guild_role_delete(role):
+    Role = Query()
+    if db.search(Role.name == role.name):
+        db.remove(Role.name == role.name)
+        print(f'{role} has been removed internally')
 
 @bot.command()
 async def joined(ctx, member: discord.Member):
@@ -89,76 +112,96 @@ async def _add(ctx, role: str):
 
 @roles.command(name='remove')
 @commands.has_permissions(administrator=True)
-async def _remove(ctx, role: str):
+async def _remove(ctx, reference_id: str):
     """Remove a role from the list of self-assignable roles."""
-    async with ctx.message.channel.typing():
-        Role = Query()
+    Role = Query()
 
-        if db.search(Role.name == role):
-            db.remove(Role.name == role)
-            embed = discord.Embed(title="Role removed",
-                                  description="Role **{}** has been removed by {}.".format(role, ctx.author.mention),
-                                  color=discord.Color.teal())
-            await ctx.send(embed=embed)
-        else:
-            await ctx.send("This role is not in the list of self-assignable roles.", delete_after=5.0)
+    role_result = db.search(Role.id == reference_id)
 
-@roles.command(name='list')
-async def _list(ctx):
-    """List all of the available roles."""
-    async with ctx.message.channel.typing():
-        roleList = db.all()
+    if role_result:
+        db.remove(Role.id == reference_id)
+        embed = discord.Embed(title="Role removed",
+                              description="Role **{}** has been removed by {}."
+                              .format(role_result[0]["name"], ctx.author.mention),
+                              color=discord.Color.teal()) \
+        .add_field(name=":speech_balloon: Message", value=role_result[0]["message"], inline=False) \
+        .add_field(name=":arrow_down: Emoji", value=role_result[0]["emoji"], inline=False) \
+        .add_field(name=":trident: Role", value=role_result[0]["name"], inline=False)
+        await ctx.send(embed=embed)
+    else:
+        await ctx.send("This reference id is invalid.", delete_after=10.0)
 
-        roleListMessage = \
-            "List of assignable roles:\n```{0}```\n" \
-            "You can use `{1}roles assign` to assign yourself an available role (e.g. `{1}roles assign {2}`)." \
-            .format("\n".join(("{}. {}".format(roleIndex, roleName["name"])
-                               for roleIndex, roleName in enumerate(roleList, 1))
-        ), ctx.prefix, random.choice(roleList)["name"])
+@roles.command(name='announce')
+@commands.has_permissions(administrator=True)
+async def _announce(ctx, channel: discord.TextChannel, title: str, body: str):
+    embed = discord.Embed(title=title,
+                          description=body,
+                          color=discord.Color.teal())
+    await channel.send(embed=embed)
 
-        await ctx.send(roleListMessage, delete_after=25.0)
+@roles.command(name='create')
+@commands.has_permissions(administrator=True)
+async def _create(ctx, channel: str, message_id: int, emoji: str, role_name: str):
+    """Bind a role to a message and emoji."""
+    bind_channel = discord.utils.get(ctx.message.guild.channels, mention=channel)
 
-@roles.command(name='assign')
-async def _assign(ctx, role_name: str):
-    """Assign yourself a role."""
-    async with ctx.message.channel.typing():
-        if role_name.isdigit():
-            roleList = db.all()
-            roleIndex = int(role_name)
-            if not 0 < roleIndex <= len(roleList):
-                await ctx.send("This role does not exist!", delete_after=5.0)
-                return
-            role_name = roleList[roleIndex - 1]["name"]
+    if bind_channel is None:
+        await ctx.send("That channel doesn't exist.", delete_after=5.0)
+        return
 
-        Role = Query()
-        discordRole = discord.utils.get(ctx.guild.roles, name=role_name)
-        if discordRole is None:
-            await ctx.send("This role does not exist!", delete_after=5.0)
-        elif not db.search(Role.name == role_name):
-            await ctx.send("This is not a self-assignable role.", delete_after=5.0)
-        else:
-            try:
-                await ctx.author.add_roles(discordRole)
-                await ctx.send("I have assigned your role.", delete_after=5.0)
-            except discord.Forbidden:
-                await ctx.send("I am not allowed to assign that role.", delete_after=5.0)
+    try:
+        await bind_channel.get_message(message_id)
 
-@roles.command(name='unassign')
-async def _unassign(ctx, role_name: str):
-    """Unassign a role."""
-    async with ctx.message.channel.typing():
-        Role = Query()
-        discordRole = discord.utils.get(ctx.guild.roles, name=role_name)
-        if discordRole is None:
-            await ctx.send("This role does not exist!", delete_after=5.0)
-        elif not db.search(Role.name == role_name):
-            await ctx.send("This is not a self-assignable role.", delete_after=5.0)
-        else:
-            try:
-                await ctx.author.remove_roles(discordRole)
-                await ctx.send("I have removed your role.", delete_after=5.0)
-            except discord.Forbidden:
-                await ctx.send("I am not allowed to remove that role.", delete_after=5.0)
+        role = discord.utils.get(ctx.guild.roles, name=role_name)
+        if role is None:
+            await ctx.send("Role does not exist.", delete_after=5.0)
+            return
+
+        referenceId = str().join(random.choices(string.ascii_letters + string.digits, k=9))
+
+        db.insert({"id": referenceId, "name": role_name, "message": message_id, "emoji": emoji})
+
+        embed = discord.Embed(title="Role registered :tada:",
+                              description="Role **{}** has been registered by {}.".format(role, ctx.author.mention),
+                              color=discord.Color.teal()) \
+        .add_field(name=":id: Reference ID", value=referenceId, inline=False) \
+        .add_field(name=":tv: Channel", value=channel, inline=False) \
+        .add_field(name=":speech_balloon: Message", value=message_id, inline=False) \
+        .add_field(name=":arrow_down: Emoji", value=emoji, inline=False) \
+        .add_field(name=":trident: Role", value=role_name, inline=False)
+
+        await ctx.send(embed=embed)
+
+        await ctx.message.delete()
+
+    except discord.errors.NotFound as notFoundError:
+        await ctx.send(f":japanese_goblin: **Uh oh:** {notFoundError.text}. "
+                       f"Please make sure you've specified the message's correct channel name and id.",
+                       delete_after=15.0)
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    Role = Query()
+    result = db.search((Role.emoji == str(payload.emoji)) & (Role.message == payload.message_id))
+
+    if result:
+        guild = bot.get_guild(payload.guild_id)
+        discordRole = discord.utils.get(guild.roles, name=result[0]["name"])
+        member = guild.get_member(payload.user_id)
+        await guild.get_member(payload.user_id).add_roles(discordRole)
+        await guild.get_channel(payload.channel_id).send(f"{member.mention} I have assigned your role.", delete_after=5.0)
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    Role = Query()
+    result = db.search((Role.emoji == str(payload.emoji)) & (Role.message == payload.message_id))
+
+    if result:
+        guild = bot.get_guild(payload.guild_id)
+        discordRole = discord.utils.get(guild.roles, name=result[0]["name"])
+        member = guild.get_member(payload.user_id)
+        await member.remove_roles(discordRole)
+        await guild.get_channel(payload.channel_id).send(f"{member.mention} I have removed your role.", delete_after=5.0)
 
 #bot.add_cog(Music(bot))
 #bot.add_cog(Speech(bot))
