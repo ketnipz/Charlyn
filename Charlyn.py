@@ -188,7 +188,7 @@ async def on_raw_reaction_add(payload):
         guild = bot.get_guild(payload.guild_id)
         discordRole = discord.utils.get(guild.roles, name=result[0]["name"])
         member = guild.get_member(payload.user_id)
-        await guild.get_member(payload.user_id).add_roles(discordRole)
+        await member.add_roles(discordRole)
         await guild.get_channel(payload.channel_id).send(f"{member.mention} I have assigned your role.", delete_after=5.0)
 
 @bot.event
