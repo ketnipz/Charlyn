@@ -53,7 +53,7 @@ class Roles:
             return
 
         try:
-            await bind_channel.get_message(message_id)
+            message = await bind_channel.get_message(message_id)
 
             role = discord.utils.get(ctx.guild.roles, name=role_name)
             if role is None:
@@ -74,6 +74,7 @@ class Roles:
             .add_field(name=":trident: Role", value=role_name, inline=False)
 
             await ctx.send(embed=embed)
+            await message.add_reaction(emoji)
 
             await ctx.message.delete()
 
