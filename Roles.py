@@ -13,20 +13,6 @@ class Roles:
         """Role management, boi."""
         pass
 
-    @roles.command(name='add')
-    @commands.has_permissions(administrator=True)
-    async def _add(self, ctx, role: str):
-        """Add a role to the list of self-assignable roles."""
-        async with ctx.message.channel.typing():
-            if discord.utils.get(ctx.guild.roles, name=role) is not None:
-                self.db.insert({"name": role})
-                embed = discord.Embed(title="Role registered",
-                                      description="Role **{}** has been registered by {}.".format(role, ctx.author.mention),
-                                      color=discord.Color.teal())
-                await ctx.send(embed=embed)
-            else:
-                await ctx.send("Invalid role specified.", delete_after=5.0)
-
     @roles.command(name='remove')
     @commands.has_permissions(administrator=True)
     async def _remove(self, ctx, reference_id: str):
