@@ -108,9 +108,11 @@ class Roles:
 
         if result:
             guild = self.bot.get_guild(payload.guild_id)
-            discordRole = discord.utils.get(guild.roles, name=result[0]["name"])
+            discord_role = discord.utils.get(guild.roles, name=result[0]["name"])
             member = guild.get_member(payload.user_id)
-            await member.add_roles(discordRole)
+
+            if not member.bot:
+                await member.add_roles(discord_role)
 
 
     async def on_raw_reaction_remove(self, payload):
@@ -119,6 +121,7 @@ class Roles:
 
         if result:
             guild = self.bot.get_guild(payload.guild_id)
-            discordRole = discord.utils.get(guild.roles, name=result[0]["name"])
+            discord_role = discord.utils.get(guild.roles, name=result[0]["name"])
             member = guild.get_member(payload.user_id)
-            await member.remove_roles(discordRole)
+
+            await member.remove_roles(discord_role)
